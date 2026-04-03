@@ -209,22 +209,31 @@ class EVChargingEnv(gym.Env):
         self.current_step += 1
         self.sim_hour      = (18.0 + self.current_step / 60.0) % 24.0
 
-        # ── 5. CHECK DEPARTURES ───────────────────────────────────────
+        # ── 5. CHECK DEPARTURES & FULLY CHARGED ───────────────────────
         step_reward     = 0.0
         newly_departed  = 0
+
+        # Count cars charged ≥ 80% (live count, not just at departure)
+        self.success_count = int(np.sum(self.battery >= TARGET_BATTERY))
 
         for i in range(NUM_CARS):
             if self.cars_done[i]:
                 continue
-            if self.current_step >= self.departure[i]:
+
+            # Car leaves if: fully charged (100%) OR departure time reached
+            fully_charged = self.battery[i] >= 100.0
+            departure_reached = self.current_step >= self.departure[i]
+
+            if fully_charged or departure_reached:
                 self.cars_done[i] = True
                 newly_departed    += 1
                 if self.battery[i] >= TARGET_BATTERY:
-                    self.success_count += 1
                     step_reward += 25.0    # ✅ Car leaves happy!
                     # Bonus for charging above target (extra satisfaction)
                     overshoot = min((self.battery[i] - TARGET_BATTERY) / 20.0, 1.0)
                     step_reward += 5.0 * overshoot
+                    if fully_charged:
+                        step_reward += 10.0  # 🎯 Extra bonus for full charge!
                 else:
                     # Penalty proportional to how short we fell
                     shortfall = (TARGET_BATTERY - self.battery[i]) / TARGET_BATTERY
@@ -277,8 +286,11 @@ class EVChargingEnv(gym.Env):
                 step_reward -= 50.0 * (1.0 - success_rate)  # Penalize truly bad episodes
 
         # ── 8. EXTRA INFO (for logging/analysis) ──────────────────────
+        # Count cars currently at ≥ 80% (includes both active and departed)
+        cars_charged = int(np.sum(self.battery >= TARGET_BATTERY))
+
         info = {
-            "success_count" : self.success_count,
+            "success_count" : cars_charged,
             "total_departed": int(np.sum(self.cars_done)),
             "grid_pct"      : round(float(grid_pct), 2),
             "fast_cars"     : fast_count,
